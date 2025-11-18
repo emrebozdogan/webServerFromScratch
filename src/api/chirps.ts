@@ -1,14 +1,16 @@
 import type { Request, Response } from "express";
-import { createChirp, getAllChirps, getChirpByID } from "../db/queries/chrips.js";
+import { createChirp, deleteChripByID, getAllChirps, getChirpByID, getChirpByUserID } from "../db/queries/chrips.js";
 import { respondWithError, respondWithJSON} from "./json.js";
-import { badRequestError, notFoundError } from "./errors.js";
+import { badRequestError, forbiddenError, notFoundError, unauthorizedError } from "./errors.js";
+import { getBearerToken, validateJWT } from "../auth.js";
+import { config } from "../config.js";
 
 export async function createChirpHandler(req: Request, res: Response) {
     type parameters = {
         body: string;
-        userId: string;
     };
-
+    const token = getBearerToken(req);
+    const userID = validateJWT(token, config.jwt.secret);
     
     const profane = ["kerfuffle", "sharbert", "fornax"];
 
@@ -26,7 +28,7 @@ export async function createChirpHandler(req: Request, res: Response) {
     }
     const chirp = await createChirp({ 
         body: params.body,
-        userId: params.userId,
+        userId: userID,
     });
 
 
@@ -52,4 +54,49 @@ export async function getChirpByIDHandler(req: Request, res: Response) {
         throw new notFoundError(`not found`);
     }; 
     respondWithJSON(res, 200, chirp);
+}
+
+export async function handlerDeleteChirp(req: Request, res: Response) {
+    const chirp = await getChirpByID(req.params.chirpID);
+    if (typeof chirp === "undefined") {
+        throw new notFoundError(`not found`);
+    };
+    const token = getBearerToken(req);
+    const userId = validateJWT(token, config.jwt.secret);
+
+    if (chirp.userId === userId) {
+        deleteChripByID(chirp.id);
+    } else {
+        throw new forbiddenError("not allowed to delete this chirp");
+    }
+
+    res.status(204).send();
+}
+
+export async function getChirps(req: Request, res: Response) {
+    let authorId = "";
+    let authorIdQuery = req.query.authorId;
+    let order = "";
+    let orderQuery = req.query.sort;
+    let chirps = [];
+    
+    if (typeof authorIdQuery === "string") {
+        authorId = authorIdQuery;
+        chirps = await getChirpByUserID(authorId);
+    } else {
+        chirps = await getAllChirps();
+    }
+
+    if ( typeof orderQuery === "string" ){
+        if ( orderQuery !== "desc") {
+            const sortedChirps = chirps.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+            respondWithJSON(res, 200, sortedChirps);
+            return;
+        } else {
+            const sortedChirps = chirps.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            respondWithJSON(res, 200, sortedChirps);
+            return;
+        }
+    }
+    respondWithJSON(res, 200, chirps);
 }
